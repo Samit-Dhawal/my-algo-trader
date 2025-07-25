@@ -1,0 +1,10 @@
+.github/
+.github
+
+dist/
+node_modules/
+coverage/
+.env
+
+venv/
+.venv/

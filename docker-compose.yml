@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: trading-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  database:
+    image: postgres:15-alpine
+    container_name: trading-postgres
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-trading123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader -d trading"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  trading-app:
+    build:
+      context: .
+      target: production
+    container_name: trading-app
+    environment:
+      - DATABASE_URL=postgresql://trader:${DB_PASSWORD:-trading123}@database:5432/trading
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  data-collector:
+    build:
+      context: .
+      target: production
+    container_name: trading-data-collector
+    environment:
+      - DATABASE_URL=postgresql://trader:${DB_PASSWORD:-trading123}@database:5432/trading
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
+    command: python scripts/collect_data.py
+    depends_on:
+      - database
+      - redis
+    restart: unless-stopped
+
+  signal-engine:
+    build:
+      context: .
+      target: production
+    container_name: trading-signal-engine
+    environment:
+      - DATABASE_URL=postgresql://trader:${DB_PASSWORD:-trading123}@database:5432/trading
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
+    command: python scripts/generate_signals.py
+    depends_on:
+      - database
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  default:
+    name: trading-network
