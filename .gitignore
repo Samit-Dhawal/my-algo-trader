@@ -1,0 +1,5 @@
+app1/
+venv/
+.env
+.env/
+trading.db
